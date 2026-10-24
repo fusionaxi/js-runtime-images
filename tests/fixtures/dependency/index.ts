@@ -1,1 +1,1 @@
-export const message = "local-dependency-ok";
+export const message = 'local-dependency-ok'

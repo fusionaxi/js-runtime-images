@@ -8,7 +8,7 @@ inputs:
   emulation:
     description: Install QEMU for cross-platform builds and tests
     required: false
-    default: "true"
+    default: 'true'
 runs:
   using: composite
   steps:
