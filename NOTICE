@@ -1,0 +1,8 @@
+FusionAxi JavaScript Runtime Images
+
+Package: @fusionaxi/js-runtime-images
+Repository: https://github.com/fusionaxi/js-runtime-images
+License: MIT (see LICENSE)
+
+Fusion Axi maintains the runtime image configuration, TypeScript build and release
+tooling, Bun test suite, and Bun + Deno image family in this repository.
