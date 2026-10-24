@@ -5,7 +5,7 @@
     "": {
       "name": "@fusionaxi/js-runtime-images",
       "dependencies": {
-        "@nodevu/core": "0.3.0",
+        "@nodevu/core": "1.1.0",
       },
       "devDependencies": {
         "@eslint/js": "10.0.1",
@@ -53,7 +53,7 @@
 
     "@keyv/serialize": ["@keyv/serialize@1.1.1", "", {}, "sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA=="],
 
-    "@nodevu/core": ["@nodevu/core@0.3.0", "", { "dependencies": { "@nodevu/parsefiles": "^0.0.3", "luxon": "^3.5.0", "semver": "^7.6.3" } }, "sha512-kVJh6kQViCE8Qf1j7pc7yhUke2kKb1eZM+rqln+EytHqyOq+eZUEtfWbDk1vfWhgiknnAcFOhdVA5apT8rTejQ=="],
+    "@nodevu/core": ["@nodevu/core@1.1.0", "", { "dependencies": { "@nodevu/parsefiles": "^0.0.3", "luxon": "^3.5.0", "semver": "^7.6.3" } }, "sha512-wb0p/vJNgIojZt738Qd3JRaCnAwShOKBIkIkmTbpNFJbjWj7iWVl7u4JZfVOBrSpJRiRaVFg49+3xQtBAHtGwA=="],
 
     "@nodevu/parsefiles": ["@nodevu/parsefiles@0.0.3", "", {}, "sha512-IjwkVqA2SlH8XweoAw7EJkeyPGk7gW9imlvhpywrKiPCLP1H0meG/blNAF5X38pirsmvhxPe/BCyywT7Exwuow=="],
 
