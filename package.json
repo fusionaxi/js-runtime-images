@@ -1,0 +1,39 @@
+{
+  "name": "@fusionaxi/js-runtime-images",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Bun tooling for FusionAxi's Bun + Node.js and Bun + Deno container images",
+  "license": "MIT",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "images": "bun src/cli.ts",
+    "matrix": "bun src/cli.ts matrix",
+    "lint": "bun --bun eslint . --max-warnings=0",
+    "lint:fix": "bun --bun eslint . --fix --max-warnings=0",
+    "format": "bun --bun prettier --write .",
+    "format:check": "bun --bun prettier --check .",
+    "test": "bun test tests/unit",
+    "test:coverage": "bun test tests/unit --coverage --coverage-reporter=text --coverage-reporter=lcov",
+    "test:images": "bun test tests/images --timeout 120000",
+    "typecheck": "bun --bun tsc --noEmit",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test",
+    "sonar:scan": "bun run test:coverage && bun run sonar:upload",
+    "sonar:upload": "bunx --bun @sonar/scan@latest"
+  },
+  "dependencies": {
+    "@nodevu/core": "0.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/bun": "1.3.14",
+    "eslint": "10.13.0",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.0"
+  }
+}

@@ -1,0 +1,27 @@
+name: Set up container engine
+description: Prepare Docker Buildx or native Podman with optional cross-platform emulation
+inputs:
+  executable:
+    description: Command to start the container engine (docker or podman)
+    required: false
+    default: docker
+  emulation:
+    description: Install QEMU for cross-platform builds and tests
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-qemu-action@v3
+      if: inputs.emulation == 'true'
+    - uses: docker/setup-buildx-action@v3
+      if: inputs.executable == 'docker'
+    - name: Prepare Podman
+      if: inputs.executable == 'podman'
+      shell: bash
+      run: |
+        if ! command -v podman >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y podman
+        fi
+        podman info

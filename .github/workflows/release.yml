@@ -1,0 +1,149 @@
+name: Release images
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      container-executable:
+        description: Command to start the container engine (docker or podman)
+        type: choice
+        options: [docker, podman]
+        default: docker
+
+permissions:
+  contents: read
+
+# Serialize releases so an older run cannot replace newer floating tags.
+concurrency:
+  group: publish-js-runtime-images
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bun run check
+      - name: Plan all supported Node.js majors with @nodevu/core and stable Deno
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          plan=$(bun src/cli.ts matrix --output .artifacts/plan.json)
+          echo "matrix=$plan" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-build-plan
+          path: .artifacts/plan.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  build:
+    name: Publish ${{ matrix.id }} (${{ join(matrix.platforms, ', ') }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CONTAINER_EXECUTABLE: ${{ inputs.container-executable || 'docker' }}
+      BUILD_PLATFORMS: ${{ join(matrix.platforms, ',') }}
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build-plan
+          path: .artifacts
+      - uses: ./.github/actions/container-engine
+        with:
+          executable: ${{ env.CONTAINER_EXECUTABLE }}
+      - uses: docker/login-action@v3
+        if: env.CONTAINER_EXECUTABLE == 'docker'
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: Log in with Podman
+        if: env.CONTAINER_EXECUTABLE == 'podman'
+        env:
+          REGISTRY_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | podman login --username "$REGISTRY_USERNAME" --password-stdin docker.io
+      - name: Push versioned image for all configured platforms
+        env:
+          BUILD_ID: ${{ matrix.id }}
+        run: |
+          bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" \
+            --platform "$BUILD_PLATFORMS" --push \
+            --metadata ".artifacts/results/$BUILD_ID.json" \
+            --container-executable "$CONTAINER_EXECUTABLE"
+      - name: Smoke test the published digest on every configured platform
+        env:
+          BUILD_ID: ${{ matrix.id }}
+          IMAGE: ${{ matrix.image }}
+          TEST_RUNTIME: ${{ matrix.runtime }}
+          TEST_VARIANT: ${{ matrix.variant }}
+          TEST_PLATFORMS: ${{ env.BUILD_PLATFORMS }}
+          EXPECTED_BUN: ${{ matrix.bunVersion }}
+          EXPECTED_RUNTIME: ${{ matrix.runtimeVersion }}
+        run: |
+          TEST_IMAGE=$(bun -e 'import { metadataDigest } from "./src/docker.ts"; const data = await Bun.file(`.artifacts/results/${Bun.env.BUILD_ID}.json`).json(); console.log(`${Bun.env.IMAGE.split(":")[0]}@${metadataDigest(data)}`)')
+          export TEST_IMAGE
+          bun run test:images
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.id }}
+          path: .artifacts/results/${{ matrix.id }}.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  promote:
+    # A failed or cancelled build prevents every floating tag from advancing.
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CONTAINER_EXECUTABLE: ${{ inputs.container-executable || 'docker' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-build-plan
+          path: .artifacts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: result-*
+          merge-multiple: true
+          path: .artifacts/results
+      - uses: ./.github/actions/container-engine
+        with:
+          executable: ${{ env.CONTAINER_EXECUTABLE }}
+          emulation: 'false'
+      - uses: docker/login-action@v3
+        if: env.CONTAINER_EXECUTABLE == 'docker'
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: Log in with Podman
+        if: env.CONTAINER_EXECUTABLE == 'podman'
+        env:
+          REGISTRY_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          REGISTRY_TOKEN: ${{ secrets.DOCKER_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | podman login --username "$REGISTRY_USERNAME" --password-stdin docker.io
+      - name: Promote verified digests to floating tags
+        run: bun run images promote --plan .artifacts/plan.json --results .artifacts/results --container-executable "$CONTAINER_EXECUTABLE"

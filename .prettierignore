@@ -1,0 +1,11 @@
+**/node_modules/
+**/dist/
+coverage/
+.artifacts/
+.idea/
+.vscode/
+.cursor/
+AGENTS.md
+bun.lock
+LICENSE
+NOTICE

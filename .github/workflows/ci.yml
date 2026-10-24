@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test:coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: error
+
+  plan:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Resolve current stable runtime versions
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          plan=$(bun src/cli.ts matrix --output .artifacts/plan.json)
+          echo "matrix=$plan" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-build-plan
+          path: .artifacts/plan.json
+          include-hidden-files: true
+          if-no-files-found: error
+
+  images:
+    name: ${{ matrix.build.id }} (${{ matrix.platform }}, ${{ matrix.container-executable }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CONTAINER_EXECUTABLE: ${{ matrix.container-executable }}
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        build: ${{ fromJSON(needs.plan.outputs.matrix).include }}
+        platform: ${{ fromJSON(needs.plan.outputs.matrix).include[0].platforms }}
+        container-executable: [docker, podman]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-build-plan
+          path: .artifacts
+      - uses: ./.github/actions/container-engine
+        with:
+          executable: ${{ env.CONTAINER_EXECUTABLE }}
+      - name: Build local image
+        env:
+          BUILD_ID: ${{ matrix.build.id }}
+          PLATFORM: ${{ matrix.platform }}
+        run: bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" --platform "$PLATFORM" --container-executable "$CONTAINER_EXECUTABLE"
+      - name: Run TypeScript container scenarios
+        env:
+          TEST_IMAGE: ${{ matrix.build.image }}
+          TEST_RUNTIME: ${{ matrix.build.runtime }}
+          TEST_VARIANT: ${{ matrix.build.variant }}
+          TEST_PLATFORMS: ${{ matrix.platform }}
+          EXPECTED_BUN: ${{ matrix.build.bunVersion }}
+          EXPECTED_RUNTIME: ${{ matrix.build.runtimeVersion }}
+        run: bun run test:images

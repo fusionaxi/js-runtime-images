@@ -1,0 +1,9 @@
+{
+  "name": "@fusionaxi/example-bun-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build main.ts --target=node --outdir=dist",
+    "start": "node dist/main.js"
+  }
+}
