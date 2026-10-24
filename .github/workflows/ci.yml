@@ -76,7 +76,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ci-build-plan
           path: .artifacts
