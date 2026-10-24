@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
@@ -26,7 +26,7 @@ jobs:
       - run: bun run lint
       - run: bun run typecheck
       - run: bun run test:coverage
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage/lcov.info
@@ -50,7 +50,7 @@ jobs:
         run: |
           plan=$(bun src/cli.ts matrix --output .artifacts/plan.json)
           echo "matrix=$plan" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ci-build-plan
           path: .artifacts/plan.json
@@ -58,36 +58,31 @@ jobs:
           if-no-files-found: error
 
   images:
-    name: ${{ matrix.build.id }} (${{ matrix.platform }}, ${{ matrix.container-executable }})
+    name: ${{ matrix.build.id }} (${{ matrix.platform }})
     needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      CONTAINER_EXECUTABLE: ${{ matrix.container-executable }}
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
         build: ${{ fromJSON(needs.plan.outputs.matrix).include }}
         platform: ${{ fromJSON(needs.plan.outputs.matrix).include[0].platforms }}
-        container-executable: [docker, podman]
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ci-build-plan
           path: .artifacts
       - uses: ./.github/actions/container-engine
-        with:
-          executable: ${{ env.CONTAINER_EXECUTABLE }}
       - name: Build local image
         env:
           BUILD_ID: ${{ matrix.build.id }}
           PLATFORM: ${{ matrix.platform }}
-        run: bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" --platform "$PLATFORM" --container-executable "$CONTAINER_EXECUTABLE"
+        run: bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" --platform "$PLATFORM"
       - name: Run TypeScript container scenarios
         env:
           TEST_IMAGE: ${{ matrix.build.image }}

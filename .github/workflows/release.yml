@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-    inputs:
-      container-executable:
-        description: Command to start the container engine (docker or podman)
-        type: choice
-        options: [docker, podman]
-        default: docker
 
 permissions:
   contents: read
@@ -39,7 +33,7 @@ jobs:
         run: |
           plan=$(bun src/cli.ts matrix --output .artifacts/plan.json)
           echo "matrix=$plan" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-build-plan
           path: .artifacts/plan.json
@@ -52,7 +46,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      CONTAINER_EXECUTABLE: ${{ inputs.container-executable || 'docker' }}
       BUILD_PLATFORMS: ${{ join(matrix.platforms, ',') }}
     strategy:
       fail-fast: false
@@ -63,32 +56,22 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-build-plan
           path: .artifacts
       - uses: ./.github/actions/container-engine
-        with:
-          executable: ${{ env.CONTAINER_EXECUTABLE }}
       - uses: docker/login-action@v3
-        if: env.CONTAINER_EXECUTABLE == 'docker'
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-      - name: Log in with Podman
-        if: env.CONTAINER_EXECUTABLE == 'podman'
-        env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          REGISTRY_TOKEN: ${{ secrets.DOCKER_TOKEN }}
-        run: printf '%s' "$REGISTRY_TOKEN" | podman login --username "$REGISTRY_USERNAME" --password-stdin docker.io
       - name: Push versioned image for all configured platforms
         env:
           BUILD_ID: ${{ matrix.id }}
         run: |
           bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" \
             --platform "$BUILD_PLATFORMS" --push \
-            --metadata ".artifacts/results/$BUILD_ID.json" \
-            --container-executable "$CONTAINER_EXECUTABLE"
+            --metadata ".artifacts/results/$BUILD_ID.json"
       - name: Smoke test the published digest on every configured platform
         env:
           BUILD_ID: ${{ matrix.id }}
@@ -102,7 +85,7 @@ jobs:
           TEST_IMAGE=$(bun -e 'import { metadataDigest } from "./src/docker.ts"; const data = await Bun.file(`.artifacts/results/${Bun.env.BUILD_ID}.json`).json(); console.log(`${Bun.env.IMAGE.split(":")[0]}@${metadataDigest(data)}`)')
           export TEST_IMAGE
           bun run test:images
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: result-${{ matrix.id }}
           path: .artifacts/results/${{ matrix.id }}.json
@@ -114,36 +97,26 @@ jobs:
     needs: [plan, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      CONTAINER_EXECUTABLE: ${{ inputs.container-executable || 'docker' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-build-plan
           path: .artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: result-*
           merge-multiple: true
           path: .artifacts/results
       - uses: ./.github/actions/container-engine
         with:
-          executable: ${{ env.CONTAINER_EXECUTABLE }}
           emulation: 'false'
       - uses: docker/login-action@v3
-        if: env.CONTAINER_EXECUTABLE == 'docker'
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-      - name: Log in with Podman
-        if: env.CONTAINER_EXECUTABLE == 'podman'
-        env:
-          REGISTRY_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          REGISTRY_TOKEN: ${{ secrets.DOCKER_TOKEN }}
-        run: printf '%s' "$REGISTRY_TOKEN" | podman login --username "$REGISTRY_USERNAME" --password-stdin docker.io
       - name: Promote verified digests to floating tags
-        run: bun run images promote --plan .artifacts/plan.json --results .artifacts/results --container-executable "$CONTAINER_EXECUTABLE"
+        run: bun run images promote --plan .artifacts/plan.json --results .artifacts/results
