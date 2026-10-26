@@ -24,6 +24,7 @@ export interface MatrixOptions {
   variant?: Variant
 }
 
+/** Generate pinned builds and floating aliases for the selected runtimes and variants. */
 export function createPlan(config: Config, versions: Versions, options: MatrixOptions = {}): Plan {
   const include: Build[] = []
   const bunVersion = version(versions.bun)
@@ -82,6 +83,7 @@ export function createPlan(config: Config, versions: Versions, options: MatrixOp
   return { include }
 }
 
+/** Reject duplicate build identifiers and image tags shared between builds. */
 function assertUniqueTags(builds: Build[]): void {
   const ids = new Set<string>()
   const tags = new Set<string>()
@@ -95,7 +97,7 @@ function assertUniqueTags(builds: Build[]): void {
   }
 }
 
-// Recreate every derived field before trusting a plan from disk.
+/** Validate a saved plan by recreating derived fields and checking aliases and tag uniqueness. */
 export function parsePlan(input: unknown, config: Config): Plan {
   if (
     typeof input !== 'object' ||

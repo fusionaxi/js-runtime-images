@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { ROOT } from '../../src/config.ts'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import {
   buildCommand,
   buildImage,
@@ -79,15 +79,17 @@ describe('build and promotion execution', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
-  test('creates metadata directories before handing the build to the runner', async () => {
+  test('copies private build metadata to the requested output', async () => {
     const metadata = join(directory, 'nested', 'results', 'build.json')
     await buildImage(build, { push: true, metadata }, async (command) => {
-      expect((await stat(dirname(metadata))).isDirectory()).toBe(true)
+      const privateMetadata = command[command.indexOf('--metadata-file') + 1]!
+      expect(privateMetadata).not.toBe(metadata)
+      await Bun.write(privateMetadata, '{}')
       commands.push(command)
     })
     expect(commands).toHaveLength(1)
     expect(commands[0]).toContain('--push')
-    expect(commands[0]).toContain(metadata)
+    expect(await Bun.file(metadata).text()).toBe('{}')
   })
 
   test('executes builds without requesting a metadata file', async () => {

@@ -19,6 +19,7 @@ interface NodeVersion {
 
 export type GetJSON = (url: string) => Promise<unknown>
 
+/** Validate an exact stable version and remove its optional leading v. */
 export function version(value: unknown): string {
   if (typeof value !== 'string' || !/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) {
     throw new Error(`Expected an exact stable version (e.g. 1.4.3), got ${String(value)}.`)
@@ -26,6 +27,7 @@ export function version(value: unknown): string {
   return value.replace(/^v/, '')
 }
 
+/** Compare stable versions numerically by major, minor, and patch. */
 export function compareVersions(a: string, b: string): number {
   const left = version(a).split('.').map(Number)
   const right = version(b).split('.').map(Number)
@@ -36,12 +38,14 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
+/** Parse a release date string into a timestamp, rejecting invalid values. */
 function releaseDate(value: unknown): number {
   const timestamp = typeof value === 'string' ? Date.parse(value) : Number.NaN
   if (!Number.isFinite(timestamp)) throw new Error('Invalid Node.js release date.')
   return timestamp
 }
 
+/** Select the newest published patch per supported Node major, preferring the newest LTS. */
 export function selectNodeReleases(data: unknown, now = new Date()): Release[] {
   if (!isRecord(data)) throw new Error('Invalid Node.js release data.')
   const newest: NodeVersion[] = []
@@ -124,6 +128,7 @@ export interface VersionOptions {
   deno?: string
 }
 
+/** Resolve stable runtime releases from explicit overrides or upstream feeds. */
 export async function resolveVersions(
   options: VersionOptions = {},
   json: GetJSON = getJSON

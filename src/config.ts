@@ -22,10 +22,12 @@ export interface Config {
   images: Record<Runtime, ImageConfig>
 }
 
+/** Narrow a value to a non-null object that is not an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Validate image names, runtime variants, platforms, and repository settings. */
 export function parseConfig(value: unknown): Config {
   if (!isRecord(value)) throw new Error('Configuration must be an object.')
   if (
@@ -77,6 +79,7 @@ export function parseConfig(value: unknown): Config {
   return value as unknown as Config
 }
 
+/** Read and validate runtime-images.json from the project root. */
 export async function loadConfig(): Promise<Config> {
   return parseConfig(await Bun.file(new URL('../runtime-images.json', import.meta.url)).json())
 }

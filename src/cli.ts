@@ -1,13 +1,11 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
-import { mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { loadConfig, RUNTIMES, VARIANTS, type Runtime, type Variant } from './config.ts'
 import { resolveVersions, type GetJSON } from './versions.ts'
 import { createPlan, parsePlan, type Plan } from './matrix.ts'
 import { buildImage, promote, type Run } from './docker.ts'
 import { containerExecutable } from './container.ts'
-import { outputPath } from './output.ts'
+import { outputPath, writeOutput } from './output.ts'
 
 const HELP = `FusionAxi runtime images (Bun required)
 
@@ -143,8 +141,7 @@ export async function main(args = Bun.argv.slice(2), services: CLIServices = {})
   }
   if (command === 'matrix') {
     if (output) {
-      await mkdir(dirname(output), { recursive: true })
-      await Bun.write(output, `${JSON.stringify(plan, null, 2)}\n`)
+      await writeOutput(output, `${JSON.stringify(plan, null, 2)}\n`)
     }
     log(JSON.stringify(plan))
     return
