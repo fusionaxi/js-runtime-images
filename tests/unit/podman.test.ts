@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { ROOT } from '../../src/config.ts'
 import { join } from 'node:path'
 import { containerExecutable, containerImage } from '../../src/container.ts'
 import { buildCommand, buildImage, promote, promotionCommands, type Run } from '../../src/docker.ts'
@@ -100,7 +100,7 @@ describe('Podman execution and result metadata', () => {
   let execute: Run
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'fusionaxi-podman-tests-'))
+    directory = await mkdtemp(join(ROOT, '.artifacts-podman-tests-'))
     commands = []
     execute = async (command) => {
       commands.push(command)
