@@ -79,18 +79,30 @@ export function selectNodeReleases(data: unknown, now = new Date()): Release[] {
   return releases.map((release) => ({ version: release.version, default: release === preferred }))
 }
 
+/**
+ * Fetch JSON from a credential-free HTTPS URL without following redirects.
+ * Authenticate only GitHub API requests and retry transient failures up to three attempts.
+ */
 export async function getJSON(url: string): Promise<unknown> {
+  const target = new URL(url)
+  if (target.protocol !== 'https:' || target.username || target.password) {
+    throw new Error('Release feeds must use HTTPS URLs without embedded credentials.')
+  }
   const headers: Record<string, string> = {
     Accept: 'application/json',
     'User-Agent': 'fusionaxi-js-runtime-images'
   }
-  if (new URL(url).hostname === 'api.github.com' && Bun.env.GITHUB_TOKEN) {
+  if (target.origin === 'https://api.github.com' && Bun.env.GITHUB_TOKEN) {
     headers.Authorization = `Bearer ${Bun.env.GITHUB_TOKEN}`
   }
   for (let attempt = 0; attempt < 3; attempt++) {
     let response: Response
     try {
-      response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+      response = await fetch(url, {
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(30_000)
+      })
     } catch (error) {
       if (attempt === 2) throw new Error(`Cannot fetch ${url}`, { cause: error })
       await Bun.sleep(250 * 2 ** attempt)
