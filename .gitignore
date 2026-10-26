@@ -1,0 +1,19 @@
+coverage/
+node_modules/
+
+# Webstorm
+.idea
+
+# proto plugins
+.prototools
+
+# Sonarqube
+.scannerwork
+
+# Local build plans and BuildKit metadata
+.artifacts/
+
+# Others
+.codex
+.cursor
+.vscode

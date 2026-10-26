@@ -1,0 +1,10 @@
+name: Set up Bun tooling
+description: Install the pinned Bun runtime and locked development dependencies
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version-file: .bun-version
+    - run: bun install --frozen-lockfile --ignore-scripts
+      shell: bash
