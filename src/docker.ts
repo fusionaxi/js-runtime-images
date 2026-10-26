@@ -83,6 +83,7 @@ export function buildCommand(
   ]
 }
 
+/** Build an image, optionally publishing it and saving metadata to a validated project path. */
 export async function buildImage(
   build: Build,
   options: BuildOptions,

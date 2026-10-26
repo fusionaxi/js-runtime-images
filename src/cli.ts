@@ -26,6 +26,7 @@ Builds load locally unless --push is explicitly set. Only promote updates floati
 Output and metadata files must be inside the project directory without symbolic links.
 `
 
+/** Parse CLI arguments and reject unsupported commands or incompatible options. */
 export function parseCLI(args: string[]) {
   const parsed = parseArgs({
     args,
@@ -113,6 +114,7 @@ export interface CLIServices {
   log?: (message: string) => void
 }
 
+/** Execute a CLI command, validating plans and output paths before writing or building. */
 export async function main(args = Bun.argv.slice(2), services: CLIServices = {}): Promise<void> {
   const log = services.log ?? console.log
   const { command, values } = parseCLI(args)

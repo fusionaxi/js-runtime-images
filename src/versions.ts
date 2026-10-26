@@ -79,6 +79,10 @@ export function selectNodeReleases(data: unknown, now = new Date()): Release[] {
   return releases.map((release) => ({ version: release.version, default: release === preferred }))
 }
 
+/**
+ * Fetch JSON from a credential-free HTTPS URL without following redirects.
+ * Authenticate only GitHub API requests and retry transient failures up to three attempts.
+ */
 export async function getJSON(url: string): Promise<unknown> {
   const target = new URL(url)
   if (target.protocol !== 'https:' || target.username || target.password) {
