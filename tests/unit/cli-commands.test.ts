@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { ROOT } from '../../src/config.ts'
 import { join } from 'node:path'
 import { main, type CLIServices } from '../../src/cli.ts'
 import { createPlan } from '../../src/matrix.ts'
@@ -13,7 +13,7 @@ describe('CLI command execution', () => {
   let services: CLIServices
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'fusionaxi-cli-'))
+    directory = await mkdtemp(join(ROOT, '.artifacts-cli-'))
     commands = []
     messages = []
     services = {

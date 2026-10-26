@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -34,6 +37,37 @@ jobs:
           name: coverage
           path: coverage/lcov.info
           if-no-files-found: error
+
+  sonarcloud:
+    needs: check
+    # Repository secrets are unavailable to fork and Dependabot pull requests.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Keep the scan token on a fresh runner that never executes project scripts.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: coverage
+          path: coverage
+      - name: Verify coverage report exists
+        run: test -s coverage/lcov.info
+      - name: Analyze code and coverage with SonarCloud
+        uses: SonarSource/sonarqube-scan-action@c7ee0f9df90b7aa20e8dcf9695dcfe2e7da5b4f2 # v7
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          skipSignatureVerification: false
+          args: >-
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
 
   plan:
     needs: check

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { ROOT } from '../../src/config.ts'
 import { dirname, join } from 'node:path'
 import {
   buildCommand,
@@ -68,7 +68,7 @@ describe('build and promotion execution', () => {
   let execute: Run
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'fusionaxi-docker-'))
+    directory = await mkdtemp(join(ROOT, '.artifacts-docker-'))
     commands = []
     execute = async (command) => {
       commands.push(command)

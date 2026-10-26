@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { ROOT, isRecord } from './config.ts'
 import type { Build, Plan } from './matrix.ts'
 import { containerExecutable, containerImage, type ContainerExecutable } from './container.ts'
+import { outputPath } from './output.ts'
 
 export type Run = (command: string[]) => Promise<void>
 
@@ -82,11 +83,14 @@ export function buildCommand(
   ]
 }
 
+/** Build an image, optionally publishing it and saving metadata to a validated project path. */
 export async function buildImage(
   build: Build,
   options: BuildOptions,
   execute: Run = run
 ): Promise<void> {
+  if (options.metadata !== undefined)
+    options = { ...options, metadata: await outputPath(options.metadata) }
   // Validate before creating files or starting a container command.
   const command = buildCommand(build, options)
   if (options.metadata) await mkdir(join(options.metadata, '..'), { recursive: true })
