@@ -1,0 +1,11 @@
+{
+  "name": "fusionaxi-container-smoke-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "verify": "bun verify.ts"
+  },
+  "dependencies": {
+    "@fusionaxi/test-dependency": "file:../dependency"
+  }
+}
