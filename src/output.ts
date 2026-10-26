@@ -5,7 +5,7 @@ import { ROOT } from './config.ts'
 // Check both the requested path and each existing ancestor before creating files.
 export async function outputPath(path: string): Promise<string> {
   const root = await realpath(ROOT)
-  const target = resolve(ROOT, path)
+  const target = resolve(root, path)
   const contained = (candidate: string) => {
     const suffix = relative(root, candidate)
     return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix)
