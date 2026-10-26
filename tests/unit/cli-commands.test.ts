@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { ROOT } from '../../src/config.ts'
 import { join } from 'node:path'
 import { main, type CLIServices } from '../../src/cli.ts'
 import { createPlan } from '../../src/matrix.ts'
@@ -13,12 +13,14 @@ describe('CLI command execution', () => {
   let services: CLIServices
 
   beforeEach(async () => {
-    directory = await mkdtemp(join(tmpdir(), 'fusionaxi-cli-'))
+    directory = await mkdtemp(join(ROOT, '.artifacts-cli-'))
     commands = []
     messages = []
     services = {
       execute: async (command) => {
         commands.push(command)
+        const index = command.indexOf('--metadata-file')
+        if (index !== -1) await Bun.write(command[index + 1]!, '{}')
       },
       getJSON: async () => {
         throw new Error('Unexpected release feed request')
@@ -162,7 +164,7 @@ describe('CLI command execution', () => {
     expect(commands[0]).toContain('RUNTIME_IMAGE=denoland/deno:debian-2.5.4')
     expect(commands[0]).toContain('--push')
     expect(commands[0]).toContain('linux/amd64')
-    expect(commands[0]).toContain(metadata)
+    expect(await Bun.file(metadata).text()).toBe('{}')
     expect(messages[0]).toBe('Built fusionaxi/bun-deno:1.4.3-2.5.4-debian')
   })
 

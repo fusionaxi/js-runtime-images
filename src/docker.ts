@@ -1,12 +1,14 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROOT, isRecord } from './config.ts'
 import type { Build, Plan } from './matrix.ts'
 import { containerExecutable, containerImage, type ContainerExecutable } from './container.ts'
+import { outputPath, writeOutput } from './output.ts'
 
 export type Run = (command: string[]) => Promise<void>
 
+/** Run a command from the project root with inherited output, rejecting nonzero exits. */
 export async function run(command: string[]): Promise<void> {
   const process = Bun.spawn(command, {
     cwd: ROOT,
@@ -25,6 +27,7 @@ export interface BuildOptions {
   containerExecutable?: ContainerExecutable
 }
 
+/** Validate build options and construct the selected container engine's build command. */
 export function buildCommand(
   build: Build,
   options: BuildOptions = {},
@@ -82,16 +85,29 @@ export function buildCommand(
   ]
 }
 
+/** Build an image, optionally publishing it and saving metadata to a validated project path. */
 export async function buildImage(
   build: Build,
   options: BuildOptions,
   execute: Run = run
 ): Promise<void> {
+  if (options.metadata !== undefined)
+    options = { ...options, metadata: await outputPath(options.metadata) }
   // Validate before creating files or starting a container command.
   const command = buildCommand(build, options)
-  if (options.metadata) await mkdir(join(options.metadata, '..'), { recursive: true })
   if (containerExecutable(options.containerExecutable) !== 'podman' || !options.push) {
-    await execute(command)
+    if (!options.metadata) {
+      await execute(command)
+      return
+    }
+    const directory = await mkdtemp(join(tmpdir(), 'fusionaxi-docker-'))
+    const metadata = join(directory, 'metadata.json')
+    try {
+      await execute(buildCommand(build, { ...options, metadata }))
+      await writeOutput(options.metadata, await Bun.file(metadata).bytes())
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
     return
   }
   const directory = await mkdtemp(join(tmpdir(), 'fusionaxi-podman-'))
@@ -113,7 +129,7 @@ export async function buildImage(
       'containerimage.digest': (await Bun.file(digestFile).text()).trim()
     })
     if (options.metadata)
-      await Bun.write(
+      await writeOutput(
         options.metadata,
         `${JSON.stringify({ 'containerimage.digest': digest }, null, 2)}\n`
       )
@@ -127,6 +143,7 @@ export async function buildImage(
   }
 }
 
+/** Extract a validated SHA-256 container digest from build metadata. */
 export function metadataDigest(metadata: unknown): string {
   if (
     !isRecord(metadata) ||
@@ -138,10 +155,12 @@ export function metadataDigest(metadata: unknown): string {
   return metadata['containerimage.digest']
 }
 
+/** Create an immutable image reference using the build repository and a validated digest. */
 export function imageAtDigest(build: Build, digest: string): string {
   return `${build.image.split(':')[0]}@${metadataDigest({ 'containerimage.digest': digest })}`
 }
 
+/** Validate build digests and construct commands that publish their floating aliases. */
 export function promotionCommands(
   plan: Plan,
   digests: Record<string, string>,
@@ -186,6 +205,7 @@ export function promotionCommands(
     })
 }
 
+/** Validate all saved build results before promoting aliases, cleaning up Podman manifests. */
 export async function promote(
   plan: Plan,
   results: string,

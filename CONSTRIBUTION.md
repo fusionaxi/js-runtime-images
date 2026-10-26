@@ -12,6 +12,14 @@ bun run test:coverage
 
 Prettier handles formatting, and ESLint handles code quality using the TypeScript recommended rules plus type-aware promise checks for `src/` and the test suites. Configuration lives in `.prettierrc.json`, `.prettierignore`, and `eslint.config.js`. All commands run through Bun. `bun run check` checks formatting, linting, types, and unit tests without rewriting files; CI also enforces these checks.
 
+## SonarCloud coverage
+
+CI runs `bun run test:coverage` before the SonarCloud scan, uploads `coverage/lcov.info` as a workflow artifact, and imports it using `sonar.javascript.lcov.reportPaths` in `sonar-project.properties`. The project key is `fusionaxi-js-runtime-images`.
+
+Configure the repository's GitHub Actions secret `SONAR_TOKEN` with a SonarCloud token that can analyze the project, and the Actions variable `SONAR_ORGANIZATION` with its SonarCloud organization key. In SonarCloud, turn off **Administration > Analysis Method > Automatic Analysis** so CI can submit coverage. Scans run on pushes to `main` and pull requests from this repository; fork and Dependabot pull requests still run checks and generate coverage but skip the authenticated scan. Reusable workflow callers must pass `SONAR_TOKEN` explicitly or use `secrets: inherit`, and provide `SONAR_ORGANIZATION` in the caller repository's Actions variables.
+
+## Development guidelines
+
 Keep runtime policy and tag generation in `src/`, image setup in `docker/`, and scenarios in `tests/`. Change `runtime-images.json` to configure image names, variants, and platforms. Do not add generated Dockerfiles for each runtime version.
 
 Unit tests run offline with release fixtures. Cover behavior such as release selection, unsupported inputs, alias conflicts, command failures, and promotion requirements. Container scenarios use `bun:test`; do not introduce pytest or Python fixtures. CI builds both architectures with Docker and Podman and runs the same scenarios for every image variant.

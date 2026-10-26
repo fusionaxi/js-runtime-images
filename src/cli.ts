@@ -1,12 +1,11 @@
 #!/usr/bin/env bun
 import { parseArgs } from 'node:util'
-import { mkdir } from 'node:fs/promises'
-import { dirname } from 'node:path'
 import { loadConfig, RUNTIMES, VARIANTS, type Runtime, type Variant } from './config.ts'
 import { resolveVersions, type GetJSON } from './versions.ts'
 import { createPlan, parsePlan, type Plan } from './matrix.ts'
 import { buildImage, promote, type Run } from './docker.ts'
 import { containerExecutable } from './container.ts'
+import { outputPath, writeOutput } from './output.ts'
 
 const HELP = `FusionAxi runtime images (Bun required)
 
@@ -22,8 +21,10 @@ const HELP = `FusionAxi runtime images (Bun required)
 Version overrides: --bun X.Y.Z, --node X.Y.Z, --deno X.Y.Z (stable releases only).
 Without overrides, versions come from the official release feeds.
 Builds load locally unless --push is explicitly set. Only promote updates floating tags.
+Output and metadata files must be inside the project directory without symbolic links.
 `
 
+/** Parse CLI arguments and reject unsupported commands or incompatible options. */
 export function parseCLI(args: string[]) {
   const parsed = parseArgs({
     args,
@@ -111,9 +112,11 @@ export interface CLIServices {
   log?: (message: string) => void
 }
 
+/** Execute a CLI command, validating plans and output paths before writing or building. */
 export async function main(args = Bun.argv.slice(2), services: CLIServices = {}): Promise<void> {
   const log = services.log ?? console.log
   const { command, values } = parseCLI(args)
+  const output = values.output === undefined ? undefined : await outputPath(values.output)
   if (values.help || command === 'help') {
     log(HELP)
     return
@@ -137,9 +140,8 @@ export async function main(args = Bun.argv.slice(2), services: CLIServices = {})
     plan = createPlan(config, versions, options)
   }
   if (command === 'matrix') {
-    if (values.output) {
-      await mkdir(dirname(values.output), { recursive: true })
-      await Bun.write(values.output, `${JSON.stringify(plan, null, 2)}\n`)
+    if (output) {
+      await writeOutput(output, `${JSON.stringify(plan, null, 2)}\n`)
     }
     log(JSON.stringify(plan))
     return
