@@ -46,7 +46,7 @@ For example, `fusionaxi/bun-node:1.4.3-24.11.1-slim` and `fusionaxi/bun-deno:1.4
 
 Floating aliases include `<runtime-major>-<variant>`, `<runtime-version>-<variant>`, and `<variant>`. Node's `latest` selects the newest supported LTS with the `slim` variant. Deno's `latest` selects the latest stable release with the `debian` variant. Other supported Node majors receive their own aliases. Bun canary and other prereleases are intentionally excluded.
 
-Daily releases rebuild every configured combination to pick up base image changes. A versioned tag can therefore change when its underlying OS is refreshed; pin `image@sha256:...` when you need an immutable reference. Floating aliases advance only after every image has passed scenarios on both architectures. Promotion uses the tested manifest digests. Docker Hub updates aliases individually, so promotion itself is not an atomic transaction across all tags.
+Daily releases reuse existing versioned images when all configured architectures are present and their build-input fingerprints match. Missing images, missing architectures, and changed Dockerfiles, entrypoint, license, or build settings trigger a rebuild. Images published before fingerprinting was introduced are rebuilt once. Manual releases can enable `force_rebuild` to refresh base images and OS packages. Versioned tags can change after these rebuilds; pin `image@sha256:...` when you need an immutable reference. Floating aliases advance only after every image has passed scenarios on both architectures. Promotion uses the tested manifest digests. Docker Hub updates aliases individually, so promotion itself is not an atomic transaction across all tags.
 
 ## Development
 
@@ -104,7 +104,7 @@ Start the selected engine before building. On macOS or Windows, Podman needs a r
 
 ## Publishing
 
-Create the `fusionaxi/bun-node` and `fusionaxi/bun-deno` repositories on Docker Hub. Configure repository Actions secrets `DOCKER_USERNAME` and `DOCKER_TOKEN` for an account allowed to push to the `fusionaxi` namespace. The GitHub Actions release workflow runs daily or manually from `main`. Manual runs offer a `container-executable` choice of `docker` or `podman`; scheduled runs use Docker.
+Create the `fusionaxi/bun-node` and `fusionaxi/bun-deno` repositories on Docker Hub. Configure repository Actions secrets `DOCKER_USERNAME` and `DOCKER_TOKEN` for an account allowed to push to the `fusionaxi` namespace. The GitHub Actions release workflow runs daily or manually from `main`. Release runs use Docker. Manual runs offer a `force_rebuild` option to bypass image reuse.
 
 CI builds and tests every configured variant on each architecture using both engines without registry credentials. Release jobs authenticate with the selected engine and explicitly build every platform in the plan (`linux/amd64` and `linux/arm64` by default) into a shared versioned tag. QEMU enables cross-platform builds and tests. Each published digest is tested on every configured platform before aliases are promoted. Docker releases include SBOM and provenance attestations. No workflow commits generated source files or stores global version state in a GitHub Release.
 
@@ -117,3 +117,5 @@ Inspired by [ImBIOS/bun-node](https://github.com/ImBIOS/bun-node).
 ## License
 
 Licensed under the [MIT license](LICENSE).
+
+Release jobs inspect Docker Hub directly rather than relying on retained artifacts for build history. Authentication and registry failures stop the release; only explicit missing-manifest responses permit a new build. Reused images are smoke tested by digest on every configured platform before promotion. Per-image result artifacts contain image references, manifest digests, fingerprints, platforms, and built/reused status. After successful promotion, the `release-manifest` artifact records verified images, commit, run URL, and publication time. Job summaries report build/reuse and verification results. Artifact expiry does not affect reuse decisions.

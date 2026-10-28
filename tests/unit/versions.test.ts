@@ -8,7 +8,7 @@ import {
   type GetJSON
 } from '../../src/versions.ts'
 import { createPlan } from '../../src/matrix.ts'
-import { config, nodeIndex, schedule } from './fixtures.ts'
+import { config, nodeIndex, nodeIndexWithNextLts, schedule } from './fixtures.ts'
 
 const nodeData = await nodevu({
   fetch: async (url) => ({ json: async () => (url.endsWith('index.json') ? nodeIndex : schedule) }),
@@ -48,17 +48,40 @@ describe('Node support policy', () => {
     expect(() => selectNodeReleases([], now)).toThrow('data')
     expect(() => selectNodeReleases({ v24: null }, now)).toThrow('entry')
   })
-  test('advances the default at the LTS start date', () => {
+  test('does not promote a non-LTS release at the scheduled LTS date', () => {
     expect(selectNodeReleases(nodeData, new Date(schedule.v26.lts))).toEqual([
-      { version: '26.0.0', default: true },
-      { version: '24.11.1', default: false },
+      { version: '26.0.0', default: false },
+      { version: '24.11.1', default: true },
       { version: '22.21.1', default: false }
     ])
+  })
+  test.each([
+    { name: 'LTS', index: nodeIndexWithNextLts, expected: '26.1.0' },
+    { name: 'non-LTS', index: nodeIndex, expected: '24.11.1' }
+  ])(
+    'selects the default from the $name feed using release metadata',
+    async ({ index, expected }) => {
+      const result = await resolveVersions(
+        { runtime: 'node', bun: '1.4.3' },
+        async (url) => (url.endsWith('index.json') ? index : schedule),
+        new Date(schedule.v26.lts)
+      )
+      expect(result.node.filter((release) => release.default)).toEqual([
+        { version: expected, default: true }
+      ])
+    }
+  )
+  test('excludes EOL LTS and non-LTS lines while retaining supported Current', () => {
+    const result = selectNodeReleases(nodeData, now)
+    expect(result).toContainEqual({ version: '26.0.0', default: false })
+    expect(result).toContainEqual({ version: '22.21.1', default: false })
+    expect(result.some((release) => /^(20|25)\./.test(release.version))).toBe(false)
   })
   test('excludes future patches and ignores lines without a support schedule', () => {
     const data = structuredClone(nodeData) as Record<string, unknown>
     data.v28 = { releases: {} }
     expect(selectNodeReleases(data, new Date('2026-01-15'))).toEqual([
+      { version: '25.0.0', default: false },
       { version: '24.9.0', default: true },
       { version: '22.21.1', default: false },
       { version: '20.19.5', default: false }
@@ -105,7 +128,7 @@ describe('release discovery', () => {
       if (url.endsWith('/schedule.json')) return schedule
       return { tag_name: 'v2.5.4', prerelease: false, draft: false }
     }
-    const result = await resolveVersions({}, json)
+    const result = await resolveVersions({}, json, new Date('2026-10-20T00:00:00Z'))
     expect(result.bun).toBe('1.4.3')
     expect(result.node.length).toBeGreaterThan(0)
     expect(result.deno).toEqual([{ version: '2.5.4', default: true }])

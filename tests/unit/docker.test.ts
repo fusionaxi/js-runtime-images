@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
+  buildFingerprint,
+  FINGERPRINT_LABEL,
+  reusableDigest,
+  releaseImage,
+  type Capture,
   buildCommand,
   buildImage,
   imageAtDigest,
@@ -184,4 +189,122 @@ describe('build and promotion execution', () => {
     await mkdir(join(directory, 'empty'))
     await expect(run([join(directory, 'empty', 'missing-command')])).rejects.toThrow()
   })
+})
+
+const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' })
+
+function registry(options: { fingerprint?: string; platforms?: string[] } = {}): Capture {
+  return async (command) => {
+    if (command.includes('--raw'))
+      return ok(
+        JSON.stringify({
+          manifests: (options.platforms ?? build.platforms).map((platform) => {
+            const [os, architecture] = platform.split('/')
+            return { platform: { os, architecture } }
+          })
+        })
+      )
+    if (command.includes('--format')) {
+      expect(command.at(-1)).toEndWith(`@${digest}`)
+      return ok(
+        JSON.stringify({
+          config: { Labels: { [FINGERPRINT_LABEL]: options.fingerprint ?? 'expected' } }
+        })
+      )
+    }
+    return ok(`Name: ${build.image}\nDigest: ${digest}\n`)
+  }
+}
+
+test('reuses the manifest digest only when platforms and fingerprints match', async () => {
+  expect(await reusableDigest(build, 'expected', registry())).toBe(digest)
+  expect(await reusableDigest(build, 'changed', registry())).toBeUndefined()
+  expect(
+    await reusableDigest(build, 'expected', registry({ platforms: ['linux/amd64'] }))
+  ).toBeUndefined()
+})
+
+test('only explicit missing manifests allow a build; registry failures stop the release', async () => {
+  expect(
+    await reusableDigest(build, 'x', async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'manifest unknown'
+    }))
+  ).toBeUndefined()
+  for (const stderr of ['unauthorized', '429 Too Many Requests', 'network timeout']) {
+    await expect(
+      reusableDigest(build, 'x', async () => ({ code: 1, stdout: '', stderr }))
+    ).rejects.toThrow(stderr)
+  }
+})
+
+test('malformed registry responses fail rather than cause a rebuild', async () => {
+  await expect(reusableDigest(build, 'x', async () => ok('invalid'))).rejects.toThrow('digest')
+})
+
+test('fingerprints ignore aliases and change with build inputs', async () => {
+  const fingerprint = await buildFingerprint(build)
+  expect(await buildFingerprint({ ...build, aliases: [] })).toBe(fingerprint)
+  expect(await buildFingerprint({ ...build, bunImage: 'oven/bun:other' })).not.toBe(fingerprint)
+  expect(buildCommand(build, { fingerprint })).toContain(`${FINGERPRINT_LABEL}=${fingerprint}`)
+})
+
+test('legacy images without fingerprints are rebuilt', async () => {
+  const execute = registry()
+  expect(
+    await reusableDigest(build, 'expected', async (command) =>
+      command.includes('--format') ? ok('{"config":{}}') : execute(command)
+    )
+  ).toBeUndefined()
+})
+
+test('recognizes Buildx missing-tag responses without hiding inspection failures', async () => {
+  expect(
+    await reusableDigest(build, 'x', async () => ({
+      code: 1,
+      stdout: '',
+      stderr: `ERROR: docker.io/${build.image}: not found`
+    }))
+  ).toBeUndefined()
+  const execute = registry()
+  await expect(
+    reusableDigest(build, 'expected', async (command) =>
+      command.includes('--raw')
+        ? { code: 1, stdout: '', stderr: 'registry unavailable' }
+        : execute(command)
+    )
+  ).rejects.toThrow('registry unavailable')
+  await expect(
+    reusableDigest(build, 'expected', async (command) =>
+      command.includes('--format')
+        ? { code: 1, stdout: '', stderr: 'unauthorized' }
+        : execute(command)
+    )
+  ).rejects.toThrow('unauthorized')
+})
+
+test('forced release bypasses registry inspection and records the built digest', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'release-force-'))
+  const metadata = join(directory, 'result.json')
+  try {
+    await releaseImage(
+      build,
+      metadata,
+      true,
+      async (command) => {
+        expect(command).toContain('--push')
+        await Bun.write(metadata, JSON.stringify({ 'containerimage.digest': digest }))
+      },
+      async () => {
+        throw new Error('force must bypass inspection')
+      }
+    )
+    const result = await Bun.file(metadata).json()
+    expect(result.status).toBe('built')
+    expect(result['containerimage.digest']).toBe(digest)
+    expect(result.verified).toBe(false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

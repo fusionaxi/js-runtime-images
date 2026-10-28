@@ -17,6 +17,7 @@ describe('CLI command execution', () => {
     commands = []
     messages = []
     services = {
+      now: new Date('2026-10-20T00:00:00Z'),
       execute: async (command) => {
         commands.push(command)
       },
@@ -132,6 +133,14 @@ describe('CLI command execution', () => {
   })
 
   test('selects the newest LTS for a default Node build rather than Current', async () => {
+    services.getJSON = async (url) => (url.endsWith('index.json') ? nodeIndex : schedule)
+    await main(['build', '--runtime', 'node', '--variant', 'slim', '--bun', '1.4.3'], services)
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toContain('RUNTIME_IMAGE=node:24.11.1-bookworm-slim')
+  })
+
+  test('keeps the default LTS when the scheduled transition has no published LTS release', async () => {
+    services.now = new Date(schedule.v26.lts)
     services.getJSON = async (url) => (url.endsWith('index.json') ? nodeIndex : schedule)
     await main(['build', '--runtime', 'node', '--variant', 'slim', '--bun', '1.4.3'], services)
     expect(commands).toHaveLength(1)
