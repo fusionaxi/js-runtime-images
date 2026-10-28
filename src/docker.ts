@@ -242,7 +242,7 @@ export async function promote(
 
 export const FINGERPRINT_LABEL = 'io.fusionaxi.build-fingerprint'
 
-// Exclude aliases: changing the default runtime must not rebuild its image.
+/** Hash build inputs and source files, excluding aliases so default-runtime changes allow reuse. */
 export async function buildFingerprint(build: Build): Promise<string> {
   const inputs = { ...build, aliases: undefined }
   const files = [
@@ -268,6 +268,7 @@ export interface Captured {
 }
 export type Capture = (command: string[]) => Promise<Captured>
 
+/** Run a registry command and collect its exit code and both output streams for inspection. */
 async function capture(command: string[]): Promise<Captured> {
   const child = Bun.spawn(command, { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' })
   const [code, stdout, stderr] = await Promise.all([
@@ -278,6 +279,10 @@ async function capture(command: string[]): Promise<Captured> {
   return { code, stdout, stderr }
 }
 
+/**
+ * Return the published digest when every configured platform has the expected fingerprint.
+ * Missing manifests or incompatible images require rebuilding; inspection failures throw.
+ */
 export async function reusableDigest(
   build: Build,
   fingerprint: string,
@@ -327,6 +332,10 @@ export async function reusableDigest(
   return digest
 }
 
+/**
+ * Validate saved digests and image references, then safely write the verified release manifest.
+ * Call only after smoke tests and promotion succeed; this function does not verify images itself.
+ */
 export async function recordRelease(plan: Plan, results: string, output: string): Promise<void> {
   output = await outputPath(output)
   const images = await Promise.all(
@@ -350,7 +359,10 @@ export async function recordRelease(plan: Plan, results: string, output: string)
       {
         schema: 1,
         commit: Bun.env.GITHUB_SHA,
-        run: `${Bun.env.GITHUB_SERVER_URL}/${Bun.env.GITHUB_REPOSITORY}/actions/runs/${Bun.env.GITHUB_RUN_ID}`,
+        run:
+          Bun.env.GITHUB_SERVER_URL && Bun.env.GITHUB_REPOSITORY && Bun.env.GITHUB_RUN_ID
+            ? `${Bun.env.GITHUB_SERVER_URL}/${Bun.env.GITHUB_REPOSITORY}/actions/runs/${Bun.env.GITHUB_RUN_ID}`
+            : undefined,
         publishedAt: new Date().toISOString(),
         images
       },
@@ -360,6 +372,10 @@ export async function recordRelease(plan: Plan, results: string, output: string)
   )
 }
 
+/**
+ * Reuse a matching published image or build and push it, bypassing reuse when forced.
+ * Safely save unverified digest metadata for subsequent smoke tests and report the build status.
+ */
 export async function releaseImage(
   build: Build,
   metadata: string,

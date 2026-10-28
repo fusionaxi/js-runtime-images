@@ -12,6 +12,7 @@ const platforms = (
 ).split(',')
 const fixtures = join(ROOT, 'tests/fixtures')
 
+/** Run the selected container engine with a timeout and capture its output and exit code. */
 async function engine(args: string[]) {
   const process = Bun.spawn([executable, ...args], {
     cwd: ROOT,
@@ -30,6 +31,7 @@ async function engine(args: string[]) {
 for (const platform of platforms) {
   describe.skipIf(!image)(`container scenarios: ${runtime} on ${platform}`, () => {
     const cleanup: string[] = []
+    /** Run an isolated container for this platform with read-only test fixtures. */
     const run = (...args: string[]) =>
       engine([
         'run',
@@ -43,6 +45,7 @@ for (const platform of platforms) {
         reference!,
         ...args
       ])
+    /** Assert a container command succeeds and return its trimmed standard output. */
     const succeeds = async (...args: string[]) => {
       const result = await run(...args)
       expect(result, result.stderr).toMatchObject({ code: 0 })

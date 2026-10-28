@@ -194,8 +194,10 @@ describe('build and promotion execution', () => {
   })
 })
 
+/** Create a successful captured command result with the supplied standard output. */
 const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' })
 
+/** Simulate registry inspection responses with configurable platforms and fingerprint labels. */
 function registry(options: { fingerprint?: string; platforms?: string[] } = {}): Capture {
   return async (command) => {
     if (command.includes('--raw'))

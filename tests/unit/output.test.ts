@@ -107,9 +107,11 @@ test('release rejects unsafe metadata before inspecting or building', async () =
   const outside = await mkdtemp(join(tmpdir(), 'release-output-'))
   const build = createPlan(config, versions).include[0]!
   let called = false
+  /** Record an unexpected build command so unsafe-path validation can be checked. */
   const execute = async () => {
     called = true
   }
+  /** Record an unexpected registry inspection and simulate a missing manifest. */
   const inspect = async () => {
     called = true
     return { code: 1, stdout: '', stderr: 'manifest unknown' }

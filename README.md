@@ -117,5 +117,3 @@ Inspired by [ImBIOS/bun-node](https://github.com/ImBIOS/bun-node).
 ## License
 
 Licensed under the [MIT license](LICENSE).
-
-Release jobs inspect Docker Hub directly rather than relying on retained artifacts for build history. Authentication and registry failures stop the release; only explicit missing-manifest responses permit a new build. Reused images are smoke tested by digest on every configured platform before promotion. Per-image result artifacts contain image references, manifest digests, fingerprints, platforms, and built/reused status. After successful promotion, the `release-manifest` artifact records verified images, commit, run URL, and publication time. Job summaries report build/reuse and verification results. Artifact expiry does not affect reuse decisions.
