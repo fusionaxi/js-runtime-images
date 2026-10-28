@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { appendFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ROOT, isRecord } from './config.ts'
@@ -22,6 +22,7 @@ export async function run(command: string[]): Promise<void> {
 
 export interface BuildOptions {
   push?: boolean
+  fingerprint?: string
   platform?: string
   metadata?: string
   containerExecutable?: ContainerExecutable
@@ -75,6 +76,9 @@ export function buildCommand(
     ...(executable === 'podman' && options.push
       ? ['--manifest', manifest ?? containerImage(build.image, executable)]
       : ['--tag', containerImage(build.image, executable)]),
+    ...(options.fingerprint
+      ? ['--label', `io.fusionaxi.build-fingerprint=${options.fingerprint}`]
+      : []),
     ...(executable === 'docker' && options.metadata ? ['--metadata-file', options.metadata] : []),
     ...(executable === 'docker'
       ? options.push
@@ -233,5 +237,170 @@ export async function promote(
         /* Keep the original registry failure if cleanup also fails. */
       }
     }
+  }
+}
+
+export const FINGERPRINT_LABEL = 'io.fusionaxi.build-fingerprint'
+
+// Exclude aliases: changing the default runtime must not rebuild its image.
+export async function buildFingerprint(build: Build): Promise<string> {
+  const inputs = { ...build, aliases: undefined }
+  const files = [
+    build.dockerfile,
+    'docker/entrypoint.sh',
+    'LICENSE',
+    '.dockerignore',
+    'src/docker.ts',
+    'src/container.ts'
+  ]
+  const contents = await Promise.all(files.map((path) => Bun.file(`${ROOT}/${path}`).text()))
+  return new Bun.CryptoHasher('sha256')
+    .update(
+      JSON.stringify({ schema: 1, inputs, files: files.map((path, i) => [path, contents[i]]) })
+    )
+    .digest('hex')
+}
+
+export interface Captured {
+  code: number
+  stdout: string
+  stderr: string
+}
+export type Capture = (command: string[]) => Promise<Captured>
+
+async function capture(command: string[]): Promise<Captured> {
+  const child = Bun.spawn(command, { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' })
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text()
+  ])
+  return { code, stdout, stderr }
+}
+
+export async function reusableDigest(
+  build: Build,
+  fingerprint: string,
+  execute: Capture = capture
+): Promise<string | undefined> {
+  const command = ['docker', 'buildx', 'imagetools', 'inspect']
+  const inspected = await execute([...command, build.image])
+  if (inspected.code !== 0) {
+    // Only a registry's explicit missing-manifest response permits building.
+    if (
+      /manifest unknown|manifest_unknown|no such manifest/i.test(inspected.stderr) ||
+      inspected.stderr.includes(`${build.image}: not found`)
+    )
+      return undefined
+    throw new Error(`Cannot inspect ${build.image}: ${inspected.stderr}`)
+  }
+  const digest = metadataDigest({
+    'containerimage.digest': inspected.stdout.match(/^Digest:\s+(sha256:[a-f0-9]{64})\s*$/m)?.[1]
+  })
+  const source = imageAtDigest(build, digest)
+  const raw = await execute([...command, '--raw', source])
+  if (raw.code !== 0) throw new Error(`Cannot inspect platforms: ${raw.stderr}`)
+  const index: unknown = JSON.parse(raw.stdout)
+  if (!isRecord(index) || !Array.isArray(index.manifests)) return undefined
+  const platforms = index.manifests.filter(isRecord).map((manifest) => {
+    const platform = manifest.platform
+    return isRecord(platform) ? `${platform.os}/${platform.architecture}` : ''
+  })
+  if (!build.platforms.every((platform) => platforms.includes(platform))) return undefined
+  for (const platform of build.platforms) {
+    const config = await execute([
+      ...command,
+      '--format',
+      `{{json (index .Image ${JSON.stringify(platform)})}}`,
+      source
+    ])
+    if (config.code !== 0) throw new Error(`Cannot inspect image configuration: ${config.stderr}`)
+    const image: unknown = JSON.parse(config.stdout)
+    if (
+      !isRecord(image) ||
+      !isRecord(image.config) ||
+      !isRecord(image.config.Labels) ||
+      image.config.Labels[FINGERPRINT_LABEL] !== fingerprint
+    )
+      return undefined
+  }
+  return digest
+}
+
+export async function recordRelease(plan: Plan, results: string, output: string): Promise<void> {
+  output = await outputPath(output)
+  const images = await Promise.all(
+    plan.include.map(async (build) => {
+      const result: unknown = await Bun.file(join(results, `${build.id}.json`)).json()
+      const digest = metadataDigest(result)
+      if (!isRecord(result) || (result.image !== undefined && result.image !== build.image))
+        throw new Error(`Release result does not match ${build.image}.`)
+      return {
+        ...result,
+        'containerimage.digest': digest,
+        image: build.image,
+        platforms: build.platforms,
+        verified: true
+      }
+    })
+  )
+  await writeOutput(
+    output,
+    JSON.stringify(
+      {
+        schema: 1,
+        commit: Bun.env.GITHUB_SHA,
+        run: `${Bun.env.GITHUB_SERVER_URL}/${Bun.env.GITHUB_REPOSITORY}/actions/runs/${Bun.env.GITHUB_RUN_ID}`,
+        publishedAt: new Date().toISOString(),
+        images
+      },
+      null,
+      2
+    ) + '\n'
+  )
+}
+
+export async function releaseImage(
+  build: Build,
+  metadata: string,
+  forceRebuild = false,
+  execute: Run = run,
+  inspect: Capture = capture
+): Promise<void> {
+  metadata = await outputPath(metadata)
+  const fingerprint = await buildFingerprint(build)
+  let status = 'failed'
+  try {
+    const existing = forceRebuild ? undefined : await reusableDigest(build, fingerprint, inspect)
+    if (!existing)
+      await buildImage(
+        build,
+        { push: true, metadata, fingerprint, containerExecutable: 'docker' },
+        execute
+      )
+    const digest = existing ?? metadataDigest(await Bun.file(metadata).json())
+    const resultStatus = existing ? 'reused' : 'built'
+    await writeOutput(
+      metadata,
+      JSON.stringify(
+        {
+          'containerimage.digest': digest,
+          image: build.image,
+          fingerprint,
+          platforms: build.platforms,
+          status: resultStatus,
+          verified: false
+        },
+        null,
+        2
+      ) + '\n'
+    )
+    status = resultStatus
+  } finally {
+    if (Bun.env.GITHUB_STEP_SUMMARY)
+      await appendFile(
+        Bun.env.GITHUB_STEP_SUMMARY,
+        `| Image | Build result |\n| --- | --- |\n| ${build.image} | ${status} |\n`
+      )
   }
 }

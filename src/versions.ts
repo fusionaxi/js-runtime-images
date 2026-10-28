@@ -61,6 +61,7 @@ export function selectNodeReleases(data: unknown, now = new Date()): Release[] {
     if (releaseDate(dates.start) > time || time >= releaseDate(dates.end)) continue
     if (!isRecord(line.releases)) throw new Error('Invalid Node.js releases.')
     let latest: string | undefined
+    let latestIsLts = false
     for (const entry of Object.values(line.releases)) {
       if (!isRecord(entry) || !isRecord(entry.semver))
         throw new Error('Invalid Node.js release entry.')
@@ -68,12 +69,15 @@ export function selectNodeReleases(data: unknown, now = new Date()): Release[] {
       if (`v${normalized.split('.')[0]}` !== major)
         throw new Error('Node.js release does not match its major.')
       if (releaseDate(entry.releaseDate) > time) continue
-      if (!latest || compareVersions(normalized, latest) > 0) latest = normalized
+      if (!latest || compareVersions(normalized, latest) > 0) {
+        latest = normalized
+        latestIsLts = isRecord(entry.lts) && entry.lts.isLts === true
+      }
     }
     if (latest) {
       newest.push({
         version: latest,
-        lts: typeof dates.lts === 'string' && releaseDate(dates.lts) <= time
+        lts: latestIsLts && typeof dates.lts === 'string' && releaseDate(dates.lts) <= time
       })
     }
   }
@@ -131,7 +135,8 @@ export interface VersionOptions {
 /** Resolve stable runtime releases from explicit overrides or upstream feeds. */
 export async function resolveVersions(
   options: VersionOptions = {},
-  json: GetJSON = getJSON
+  json: GetJSON = getJSON,
+  now = new Date()
 ): Promise<Versions> {
   const bun = options.bun
     ? Promise.resolve(version(options.bun))
@@ -147,11 +152,11 @@ export async function resolveVersions(
         : nodevu({
             // Keep bounded retries, timeouts, and injectable feeds for offline tests.
             fetch: async (url) => ({ json: () => json(url) }),
-            now: new Date().toISOString(),
+            now: now.toISOString(),
             urls: {
               schedule: 'https://raw.githubusercontent.com/nodejs/Release/main/schedule.json'
             }
-          }).then((data) => selectNodeReleases(data))
+          }).then((data) => selectNodeReleases(data, now))
   const deno =
     options.runtime === 'node'
       ? Promise.resolve([])

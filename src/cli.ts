@@ -3,7 +3,14 @@ import { parseArgs } from 'node:util'
 import { loadConfig, RUNTIMES, VARIANTS, type Runtime, type Variant } from './config.ts'
 import { resolveVersions, type GetJSON } from './versions.ts'
 import { createPlan, parsePlan, type Plan } from './matrix.ts'
-import { buildImage, promote, type Run } from './docker.ts'
+import {
+  buildImage,
+  promote,
+  releaseImage,
+  recordRelease,
+  type Capture,
+  type Run
+} from './docker.ts'
 import { containerExecutable } from './container.ts'
 import { outputPath, writeOutput } from './output.ts'
 
@@ -12,7 +19,8 @@ const HELP = `FusionAxi runtime images (Bun required)
   bun run images matrix [--runtime node|deno] [--variant VARIANT] [--output FILE]
   bun run images build --runtime node|deno --variant VARIANT [--push] [--platform PLATFORM]
   bun run images build --plan FILE --id ID [--push] [--metadata FILE]
-  bun run images promote --plan FILE --results DIRECTORY
+  bun run images release --plan FILE --id ID --metadata FILE [--force-rebuild]
+  bun run images promote --plan FILE --results DIRECTORY [--output FILE]
 
   --container-executable docker|podman
     Command to start the container engine (docker or podman).
@@ -43,6 +51,7 @@ export function parseCLI(args: string[]) {
       metadata: { type: 'string' },
       results: { type: 'string' },
       push: { type: 'boolean', default: false },
+      'force-rebuild': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       'container-executable': { type: 'string' }
     }
@@ -51,7 +60,7 @@ export function parseCLI(args: string[]) {
   if (values.help) return { command: 'help', values }
   const command = positionals[0] ?? 'help'
   if (positionals.length > 1) throw new Error('Expected a single command.')
-  if (!['help', 'matrix', 'build', 'promote'].includes(command))
+  if (!['help', 'matrix', 'build', 'promote', 'release'].includes(command))
     throw new Error(`Unknown command: ${command}`)
   if (values['container-executable'] !== undefined)
     containerExecutable(values['container-executable'])
@@ -79,6 +88,14 @@ export function parseCLI(args: string[]) {
   if (command === 'build' && !values.plan && (!values.runtime || !values.variant)) {
     throw new Error('build requires --runtime and --variant, or --plan and --id.')
   }
+  if (command === 'release' && (!values.plan || !values.id || !values.metadata))
+    throw new Error('release requires --plan, --id, and --metadata.')
+  if (
+    command === 'release' &&
+    values['container-executable'] &&
+    values['container-executable'] !== 'docker'
+  )
+    throw new Error('release requires Docker.')
   const allowed: Record<string, string[]> = {
     help: ['help'],
     matrix: ['runtime', 'variant', 'bun', 'node', 'deno', 'output', 'help'],
@@ -96,7 +113,8 @@ export function parseCLI(args: string[]) {
       'help',
       'container-executable'
     ],
-    promote: ['plan', 'results', 'help', 'container-executable']
+    release: ['plan', 'id', 'metadata', 'force-rebuild', 'help', 'container-executable'],
+    promote: ['plan', 'results', 'output', 'help', 'container-executable']
   }
   for (const key of Object.keys(values)) {
     if (key === 'push' && !values.push) continue
@@ -107,8 +125,10 @@ export function parseCLI(args: string[]) {
 }
 
 export interface CLIServices {
+  inspect?: Capture
   execute?: Run
   getJSON?: GetJSON
+  now?: Date
   log?: (message: string) => void
 }
 
@@ -116,11 +136,11 @@ export interface CLIServices {
 export async function main(args = Bun.argv.slice(2), services: CLIServices = {}): Promise<void> {
   const log = services.log ?? console.log
   const { command, values } = parseCLI(args)
-  const output = values.output === undefined ? undefined : await outputPath(values.output)
   if (values.help || command === 'help') {
     log(HELP)
     return
   }
+  const output = values.output === undefined ? undefined : await outputPath(values.output)
   const executable =
     command === 'matrix' ? undefined : containerExecutable(values['container-executable'])
   const config = await loadConfig()
@@ -133,7 +153,7 @@ export async function main(args = Bun.argv.slice(2), services: CLIServices = {})
       runtime: values.runtime as Runtime | undefined,
       variant: values.variant as Variant | undefined
     }
-    const versions = await resolveVersions(options, services.getJSON)
+    const versions = await resolveVersions(options, services.getJSON, services.now)
     if (command === 'build' && options.runtime) {
       versions[options.runtime] = versions[options.runtime].filter((release) => release.default)
     }
@@ -148,11 +168,23 @@ export async function main(args = Bun.argv.slice(2), services: CLIServices = {})
   }
   if (command === 'promote') {
     await promote(plan, values.results!, services.execute, executable)
+    if (output) await recordRelease(plan, values.results!, output)
     return
   }
   const build = values.id ? plan.include.find((entry) => entry.id === values.id) : plan.include[0]
   if (!build || (!values.id && plan.include.length !== 1))
     throw new Error('Select exactly one build using --id or an exact runtime version.')
+  if (command === 'release') {
+    if (executable !== 'docker') throw new Error('release requires Docker.')
+    await releaseImage(
+      build,
+      values.metadata!,
+      values['force-rebuild'],
+      services.execute,
+      services.inspect
+    )
+    return
+  }
   await buildImage(
     build,
     {

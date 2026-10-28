@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ROOT } from '../../src/config.ts'
 import { outputPath, writeOutput } from '../../src/output.ts'
 import { main } from '../../src/cli.ts'
-import { buildImage } from '../../src/docker.ts'
+import { buildImage, recordRelease, releaseImage } from '../../src/docker.ts'
 import { createPlan } from '../../src/matrix.ts'
 import { config, versions } from './fixtures.ts'
 
@@ -97,6 +97,42 @@ test('refuses a parent swapped after write validation and before filesystem use'
     expect(await Bun.file(join(outside, 'result.json')).exists()).toBe(false)
   } finally {
     hook.mockRestore()
+    await rm(directory, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test('release rejects unsafe metadata before inspecting or building', async () => {
+  const directory = await mkdtemp(join(ROOT, '.artifacts-output-'))
+  const outside = await mkdtemp(join(tmpdir(), 'release-output-'))
+  const build = createPlan(config, versions).include[0]!
+  let called = false
+  const execute = async () => {
+    called = true
+  }
+  const inspect = async () => {
+    called = true
+    return { code: 1, stdout: '', stderr: 'manifest unknown' }
+  }
+  try {
+    await symlink(outside, join(directory, 'link'))
+    for (const metadata of [join(outside, 'result.json'), join(directory, 'link', 'result.json')]) {
+      await expect(releaseImage(build, metadata, false, execute, inspect)).rejects.toThrow()
+      await expect(releaseImage(build, metadata, true, execute, inspect)).rejects.toThrow()
+    }
+    expect(called).toBe(false)
+    expect(await Bun.file(join(outside, 'result.json')).exists()).toBe(false)
+    await expect(
+      recordRelease(createPlan(config, versions), directory, join(outside, 'release.json'))
+    ).rejects.toThrow('inside the project')
+    await expect(
+      recordRelease(
+        createPlan(config, versions),
+        directory,
+        join(directory, 'link', 'release.json')
+      )
+    ).rejects.toThrow('symbolic links')
+  } finally {
     await rm(directory, { recursive: true, force: true })
     await rm(outside, { recursive: true, force: true })
   }

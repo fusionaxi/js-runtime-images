@@ -116,3 +116,32 @@ describe('Bun CLI', () => {
     expect(error).toContain('Unknown command: unknown')
   })
 })
+
+test('release CLI validates required inputs and Docker support', () => {
+  expect(
+    parseCLI([
+      'release',
+      '--plan',
+      'plan.json',
+      '--id',
+      'node-24-slim',
+      '--metadata',
+      'result.json',
+      '--force-rebuild'
+    ]).values['force-rebuild']
+  ).toBe(true)
+  expect(() => parseCLI(['release', '--plan', 'plan.json'])).toThrow('release requires')
+  expect(() =>
+    parseCLI([
+      'release',
+      '--plan',
+      'plan.json',
+      '--id',
+      'node-24-slim',
+      '--metadata',
+      'result.json',
+      '--container-executable',
+      'podman'
+    ])
+  ).toThrow('Docker')
+})
