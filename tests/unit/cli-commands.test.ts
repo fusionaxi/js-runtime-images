@@ -251,6 +251,9 @@ describe('CLI command execution', () => {
       services
     )
     expect((await Bun.file(metadata).json()).status).toBe('built')
+    const result = await Bun.file(metadata).json()
+    expect(result.verified).toBe(false)
+    await Bun.write(metadata, JSON.stringify({ ...result, verified: true }))
     await main(['promote', '--plan', path, '--results', directory, '--output', output], services)
     expect(commands).toHaveLength(2)
     expect(commands[1]!.at(-1)).toBe(`fusionaxi/bun-deno@${digest}`)

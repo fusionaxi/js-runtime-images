@@ -333,8 +333,8 @@ export async function reusableDigest(
 }
 
 /**
- * Validate saved digests and image references, then safely write the verified release manifest.
- * Call only after smoke tests and promotion succeed; this function does not verify images itself.
+ * Require successful verification evidence and validate saved digests and image references.
+ * Safely write the release manifest after promotion; this function does not test images itself.
  */
 export async function recordRelease(plan: Plan, results: string, output: string): Promise<void> {
   output = await outputPath(output)
@@ -344,12 +344,13 @@ export async function recordRelease(plan: Plan, results: string, output: string)
       const digest = metadataDigest(result)
       if (!isRecord(result) || (result.image !== undefined && result.image !== build.image))
         throw new Error(`Release result does not match ${build.image}.`)
+      if (result.verified !== true)
+        throw new Error(`Release result lacks successful verification for ${build.image}.`)
       return {
         ...result,
         'containerimage.digest': digest,
         image: build.image,
-        platforms: build.platforms,
-        verified: true
+        platforms: build.platforms
       }
     })
   )

@@ -349,7 +349,10 @@ test('records validated releases in newly created output directories', async () 
   const single = { include: [build] }
   const result = join(directory, `${build.id}.json`)
   try {
-    await Bun.write(result, JSON.stringify({ 'containerimage.digest': digest, status: 'reused' }))
+    await Bun.write(
+      result,
+      JSON.stringify({ 'containerimage.digest': digest, status: 'reused', verified: true })
+    )
     await recordRelease(single, directory, output)
     expect((await Bun.file(output).json()).images[0]).toMatchObject({
       image: build.image,
@@ -357,6 +360,19 @@ test('records validated releases in newly created output directories', async () 
       platforms: build.platforms,
       verified: true
     })
+    const manifest = await Bun.file(output).text()
+    for (const verified of [undefined, false, null, 'true', 1]) {
+      await Bun.write(result, JSON.stringify({ 'containerimage.digest': digest, verified }))
+      await expect(recordRelease(single, directory, output)).rejects.toThrow(
+        'successful verification'
+      )
+      expect(await Bun.file(output).text()).toBe(manifest)
+      const missingOutput = join(directory, 'unverified.json')
+      await expect(recordRelease(single, directory, missingOutput)).rejects.toThrow(
+        'successful verification'
+      )
+      expect(await Bun.file(missingOutput).exists()).toBe(false)
+    }
     await Bun.write(result, JSON.stringify({ 'containerimage.digest': 'invalid' }))
     await expect(recordRelease(single, directory, output)).rejects.toThrow('digest')
     await Bun.write(

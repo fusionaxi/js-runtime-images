@@ -105,6 +105,11 @@ jobs:
           TEST_IMAGE=$(bun -e 'import { metadataDigest } from "./src/docker.ts"; const data = await Bun.file(`.artifacts/results/${Bun.env.BUILD_ID}.json`).json(); console.log(`${Bun.env.IMAGE.split(":")[0]}@${metadataDigest(data)}`)')
           export TEST_IMAGE
           bun run test:images
+      - name: Record successful smoke verification
+        env:
+          BUILD_ID: ${{ matrix.id }}
+        run: |
+          bun -e 'const path = `.artifacts/results/${Bun.env.BUILD_ID}.json`; const result = await Bun.file(path).json(); await Bun.write(path, JSON.stringify({ ...result, verified: true }, null, 2) + "\n")'
       - name: Report verification result
         if: always()
         env:
