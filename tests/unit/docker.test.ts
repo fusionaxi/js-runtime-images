@@ -3,6 +3,12 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { ROOT } from '../../src/config.ts'
 import { join } from 'node:path'
 import {
+  buildFingerprint,
+  FINGERPRINT_LABEL,
+  reusableDigest,
+  releaseImage,
+  recordRelease,
+  type Capture,
   buildCommand,
   buildImage,
   imageAtDigest,
@@ -186,4 +192,195 @@ describe('build and promotion execution', () => {
     await mkdir(join(directory, 'empty'))
     await expect(run([join(directory, 'empty', 'missing-command')])).rejects.toThrow()
   })
+})
+
+/** Create a successful captured command result with the supplied standard output. */
+const ok = (stdout: string) => ({ code: 0, stdout, stderr: '' })
+
+/** Simulate registry inspection responses with configurable platforms and fingerprint labels. */
+function registry(options: { fingerprint?: string; platforms?: string[] } = {}): Capture {
+  return async (command) => {
+    if (command.includes('--raw'))
+      return ok(
+        JSON.stringify({
+          manifests: (options.platforms ?? build.platforms).map((platform) => {
+            const [os, architecture] = platform.split('/')
+            return { platform: { os, architecture } }
+          })
+        })
+      )
+    if (command.includes('--format')) {
+      expect(command.at(-1)).toEndWith(`@${digest}`)
+      return ok(
+        JSON.stringify({
+          config: { Labels: { [FINGERPRINT_LABEL]: options.fingerprint ?? 'expected' } }
+        })
+      )
+    }
+    return ok(`Name: ${build.image}\nDigest: ${digest}\n`)
+  }
+}
+
+test('reuses the manifest digest only when platforms and fingerprints match', async () => {
+  expect(await reusableDigest(build, 'expected', registry())).toBe(digest)
+  expect(await reusableDigest(build, 'changed', registry())).toBeUndefined()
+  expect(
+    await reusableDigest(build, 'expected', registry({ platforms: ['linux/amd64'] }))
+  ).toBeUndefined()
+})
+
+test('only explicit missing manifests allow a build; registry failures stop the release', async () => {
+  expect(
+    await reusableDigest(build, 'x', async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'manifest unknown'
+    }))
+  ).toBeUndefined()
+  for (const stderr of ['unauthorized', '429 Too Many Requests', 'network timeout']) {
+    await expect(
+      reusableDigest(build, 'x', async () => ({ code: 1, stdout: '', stderr }))
+    ).rejects.toThrow(stderr)
+  }
+})
+
+test('malformed registry responses fail rather than cause a rebuild', async () => {
+  await expect(reusableDigest(build, 'x', async () => ok('invalid'))).rejects.toThrow('digest')
+})
+
+test('fingerprints ignore aliases and change with build inputs', async () => {
+  const fingerprint = await buildFingerprint(build)
+  expect(await buildFingerprint({ ...build, aliases: [] })).toBe(fingerprint)
+  expect(await buildFingerprint({ ...build, bunImage: 'oven/bun:other' })).not.toBe(fingerprint)
+  expect(buildCommand(build, { fingerprint })).toContain(`${FINGERPRINT_LABEL}=${fingerprint}`)
+})
+
+test('legacy images without fingerprints are rebuilt', async () => {
+  const execute = registry()
+  expect(
+    await reusableDigest(build, 'expected', async (command) =>
+      command.includes('--format') ? ok('{"config":{}}') : execute(command)
+    )
+  ).toBeUndefined()
+})
+
+test('recognizes Buildx missing-tag responses without hiding inspection failures', async () => {
+  expect(
+    await reusableDigest(build, 'x', async () => ({
+      code: 1,
+      stdout: '',
+      stderr: `ERROR: docker.io/${build.image}: not found`
+    }))
+  ).toBeUndefined()
+  const execute = registry()
+  await expect(
+    reusableDigest(build, 'expected', async (command) =>
+      command.includes('--raw')
+        ? { code: 1, stdout: '', stderr: 'registry unavailable' }
+        : execute(command)
+    )
+  ).rejects.toThrow('registry unavailable')
+  await expect(
+    reusableDigest(build, 'expected', async (command) =>
+      command.includes('--format')
+        ? { code: 1, stdout: '', stderr: 'unauthorized' }
+        : execute(command)
+    )
+  ).rejects.toThrow('unauthorized')
+})
+
+test('forced release bypasses registry inspection and records the built digest', async () => {
+  const directory = await mkdtemp(join(ROOT, '.artifacts-release-force-'))
+  const metadata = join(directory, 'result.json')
+  try {
+    await releaseImage(
+      build,
+      metadata,
+      true,
+      async (command) => {
+        expect(command).toContain('--push')
+        const privateMetadata = command[command.indexOf('--metadata-file') + 1]!
+        await Bun.write(privateMetadata, JSON.stringify({ 'containerimage.digest': digest }))
+      },
+      async () => {
+        throw new Error('force must bypass inspection')
+      }
+    )
+    const result = await Bun.file(metadata).json()
+    expect(result.status).toBe('built')
+    expect(result['containerimage.digest']).toBe(digest)
+    expect(result.verified).toBe(false)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('reused releases save safe metadata without invoking a builder', async () => {
+  const directory = await mkdtemp(join(ROOT, '.artifacts-release-reuse-'))
+  const metadata = join(directory, 'nested', 'result.json')
+  try {
+    const fingerprint = await buildFingerprint(build)
+    await releaseImage(
+      build,
+      metadata,
+      false,
+      async () => {
+        throw new Error('must reuse')
+      },
+      registry({ fingerprint })
+    )
+    const result = await Bun.file(metadata).json()
+    expect(result).toMatchObject({
+      image: build.image,
+      status: 'reused',
+      fingerprint,
+      verified: false,
+      'containerimage.digest': digest
+    })
+    expect(result.platforms).toEqual(build.platforms)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('records validated releases in newly created output directories', async () => {
+  const directory = await mkdtemp(join(ROOT, '.artifacts-release-record-'))
+  const output = join(directory, 'nested', 'release.json')
+  const single = { include: [build] }
+  const result = join(directory, `${build.id}.json`)
+  try {
+    await Bun.write(
+      result,
+      JSON.stringify({ 'containerimage.digest': digest, status: 'reused', verified: true })
+    )
+    await recordRelease(single, directory, output)
+    expect((await Bun.file(output).json()).images[0]).toMatchObject({
+      image: build.image,
+      'containerimage.digest': digest,
+      platforms: build.platforms,
+      verified: true
+    })
+    const manifest = await Bun.file(output).text()
+    for (const verified of [undefined, false, null, 'true', 1]) {
+      await Bun.write(result, JSON.stringify({ 'containerimage.digest': digest, verified }))
+      await expect(recordRelease(single, directory, output)).rejects.toThrow(
+        'successful verification'
+      )
+      expect(await Bun.file(output).text()).toBe(manifest)
+      const missingOutput = join(directory, 'unverified.json')
+      await expect(recordRelease(single, directory, missingOutput)).rejects.toThrow(
+        'successful verification'
+      )
+      expect(await Bun.file(missingOutput).exists()).toBe(false)
+    }
+    await Bun.write(result, JSON.stringify({ 'containerimage.digest': 'invalid' }))
+    await expect(recordRelease(single, directory, output)).rejects.toThrow('digest')
+    await Bun.write(
+      result,
+      JSON.stringify({ 'containerimage.digest': digest, image: 'wrong/image:tag' })
+    )
+    await expect(recordRelease(single, directory, output)).rejects.toThrow('does not match')
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })

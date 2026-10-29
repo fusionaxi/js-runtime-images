@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ROOT } from '../../src/config.ts'
 
+/** Run the entrypoint through the host shell and capture its output and exit code. */
 async function entrypoint(args: string[]) {
   const process = Bun.spawn(['sh', 'docker/entrypoint.sh', ...args], {
     cwd: ROOT,

@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: Rebuild existing versions to refresh base images and OS packages
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -78,13 +83,15 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-      - name: Push versioned image for all configured platforms
+      - name: Build missing or changed images, or reuse the published digest
         env:
           BUILD_ID: ${{ matrix.id }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
         run: |
-          bun run images build --plan .artifacts/plan.json --id "$BUILD_ID" \
-            --platform "$BUILD_PLATFORMS" --push \
-            --metadata ".artifacts/results/$BUILD_ID.json"
+          args=()
+          if [ "$FORCE_REBUILD" = true ]; then args+=(--force-rebuild); fi
+          bun run images release --plan .artifacts/plan.json --id "$BUILD_ID" \
+            --metadata ".artifacts/results/$BUILD_ID.json" "${args[@]}"
       - name: Smoke test the published digest on every configured platform
         env:
           BUILD_ID: ${{ matrix.id }}
@@ -98,6 +105,16 @@ jobs:
           TEST_IMAGE=$(bun -e 'import { metadataDigest } from "./src/docker.ts"; const data = await Bun.file(`.artifacts/results/${Bun.env.BUILD_ID}.json`).json(); console.log(`${Bun.env.IMAGE.split(":")[0]}@${metadataDigest(data)}`)')
           export TEST_IMAGE
           bun run test:images
+      - name: Record successful smoke verification
+        env:
+          BUILD_ID: ${{ matrix.id }}
+        run: |
+          bun -e 'const path = `.artifacts/results/${Bun.env.BUILD_ID}.json`; const result = await Bun.file(path).json(); await Bun.write(path, JSON.stringify({ ...result, verified: true }, null, 2) + "\n")'
+      - name: Report verification result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: echo "Verification job result = $RESULT" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         with:
           name: result-${{ matrix.id }}
@@ -132,4 +149,10 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
       - name: Promote verified digests to floating tags
-        run: bun run images promote --plan .artifacts/plan.json --results .artifacts/results
+        run: bun run images promote --plan .artifacts/plan.json --results .artifacts/results --output .artifacts/release.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-manifest
+          path: .artifacts/release.json
+          include-hidden-files: true
+          if-no-files-found: error

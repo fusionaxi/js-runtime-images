@@ -17,6 +17,7 @@ describe('CLI command execution', () => {
     commands = []
     messages = []
     services = {
+      now: new Date('2026-10-20T00:00:00Z'),
       execute: async (command) => {
         commands.push(command)
         const index = command.indexOf('--metadata-file')
@@ -140,6 +141,14 @@ describe('CLI command execution', () => {
     expect(commands[0]).toContain('RUNTIME_IMAGE=node:24.11.1-bookworm-slim')
   })
 
+  test('keeps the default LTS when the scheduled transition has no published LTS release', async () => {
+    services.now = new Date(schedule.v26.lts)
+    services.getJSON = async (url) => (url.endsWith('index.json') ? nodeIndex : schedule)
+    await main(['build', '--runtime', 'node', '--variant', 'slim', '--bun', '1.4.3'], services)
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toContain('RUNTIME_IMAGE=node:24.11.1-bookworm-slim')
+  })
+
   test('builds the requested saved-plan entry with push, platform, and metadata options', async () => {
     const plan = createPlan(config, versions)
     const path = join(directory, 'plan.json')
@@ -216,5 +225,50 @@ describe('CLI command execution', () => {
     expect(commands[0]!.slice(0, 4)).toEqual(['docker', 'buildx', 'imagetools', 'create'])
     expect(commands[0]).toContain('fusionaxi/bun-deno:latest')
     expect(commands[0]!.at(-1)).toBe(`fusionaxi/bun-deno@${digest}`)
+  })
+
+  test('publishes a forced release through private metadata and records promotion', async () => {
+    const plan = createPlan(config, versions, { runtime: 'deno', variant: 'alpine' })
+    const build = plan.include[0]!
+    const path = join(directory, 'plan.json')
+    const metadata = join(directory, `${build.id}.json`)
+    const output = join(directory, 'nested', 'release.json')
+    const digest = `sha256:${'c'.repeat(64)}`
+    await Bun.write(path, JSON.stringify(plan))
+    services.execute = async (command) => {
+      commands.push(command)
+      const index = command.indexOf('--metadata-file')
+      if (index !== -1) {
+        expect(command[index + 1]).not.toBe(metadata)
+        await Bun.write(command[index + 1]!, JSON.stringify({ 'containerimage.digest': digest }))
+      }
+    }
+    services.inspect = async () => {
+      throw new Error('forced release must not inspect')
+    }
+    await main(
+      ['release', '--plan', path, '--id', build.id, '--metadata', metadata, '--force-rebuild'],
+      services
+    )
+    expect((await Bun.file(metadata).json()).status).toBe('built')
+    const result = await Bun.file(metadata).json()
+    expect(result.verified).toBe(false)
+    await Bun.write(metadata, JSON.stringify({ ...result, verified: true }))
+    await main(['promote', '--plan', path, '--results', directory, '--output', output], services)
+    expect(commands).toHaveLength(2)
+    expect(commands[1]!.at(-1)).toBe(`fusionaxi/bun-deno@${digest}`)
+    expect((await Bun.file(output).json()).images[0].verified).toBe(true)
+  })
+
+  test('rejects unsafe promotion output before changing registry aliases', async () => {
+    const path = join(directory, 'plan.json')
+    await Bun.write(path, JSON.stringify(createPlan(config, versions)))
+    await expect(
+      main(
+        ['promote', '--plan', path, '--results', directory, '--output', '../escape.json'],
+        services
+      )
+    ).rejects.toThrow('inside the project')
+    expect(commands).toEqual([])
   })
 })
